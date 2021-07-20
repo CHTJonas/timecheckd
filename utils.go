@@ -9,14 +9,15 @@ import (
 const daysPreEpoch = 40587
 const secsPerDay = 24 * 60 * 60
 
-func getMjd() mjd.Mjd {
+func getMjd() (*mjd.Mjd, error) {
 	target := "ntp0a.cl.cam.ac.uk"
 	t, err := ntp.GetTime(target)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	daysPostEpoch := t.Unix() / secsPerDay
 	days := uint64(daysPreEpoch + daysPostEpoch)
 	micros := float64((t.Unix()-daysPostEpoch*secsPerDay)*1e6) + float64(t.Nanosecond())/1000
-	return mjd.New(days, micros)
+	retval := mjd.New(days, micros)
+	return &retval, nil
 }

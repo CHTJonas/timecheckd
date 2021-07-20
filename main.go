@@ -56,7 +56,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	now := mjd.Now()
+	now, err := getMjd()
+	if err != nil {
+		fmt.Printf("fatal: could not obtain timestamp from NTP: %v\n", err)
+		os.Exit(1)
+	}
 	yesterday := mjd.New(now.Day()-1, now.Microseconds())
 	tomorrow := mjd.New(now.Day()+1, now.Microseconds())
 	cert, err := protocol.CreateCertificate(yesterday, tomorrow, pub, rootKey)
@@ -72,7 +76,12 @@ func main() {
 			fmt.Printf("error reading query: %v\n", err)
 			continue
 		}
-		reply, err := protocol.CreateReply(query[:queryLen], getMjd(), 1000000, cert, priv)
+		tstamp, err := getMjd()
+		if err != nil {
+			fmt.Printf("error obtaining timestamp from NTP: %v\n", err)
+			continue
+		}
+		reply, err := protocol.CreateReply(query[:queryLen], *tstamp, 1000000, cert, priv)
 		if err != nil {
 			fmt.Printf("error generating reply: %v\n", err)
 			continue
