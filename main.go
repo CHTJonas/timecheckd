@@ -5,13 +5,43 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
-var targetURL = "https://www.cl.cam.ac.uk/"
-var version = "dev"
+var (
+	version    = "dev"
+	targetURLs = []string{
+		"https://www.cl.cam.ac.uk/",
+		"https://www.srcf.net/",
+		"https://sobornost.net/",
+	}
+)
 
 func main() {
+	go testLoop()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT)
+	signal.Notify(quit, syscall.SIGTERM)
+	<-quit
+}
+
+func testLoop() {
+	for {
+		offset := float64(120) / float64(len(targetURLs))
+		duration := time.Duration(offset * float64(time.Second))
+		for _, targetURL := range targetURLs {
+			if !testURL(targetURL) {
+				fmt.Println("Your clock is skewed compared to " + targetURL)
+			}
+			time.Sleep(duration)
+		}
+	}
+}
+
+func testURL(targetURL string) bool {
 	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
 		panic(err)
@@ -29,11 +59,14 @@ func main() {
 	if dateString := resp.Header.Get("Date"); dateString != "" {
 		t := parseHTTPDate(dateString)
 		d := time.Now().UTC().Sub(*t)
-		fmt.Println(d)
+		fmt.Println("Debug:", targetURL, "time diff is", d)
 		if d > 10*time.Second || d < -10*time.Second {
-			fmt.Println("Your clock is skewed")
+			return false
 		}
+		return true
 	}
+
+	return false
 }
 
 func parseHTTPDate(dateString string) *time.Time {
