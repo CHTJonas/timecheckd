@@ -3,6 +3,7 @@ package ntp
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 )
@@ -17,8 +18,10 @@ const (
 func GetTime(host string) (time.Time, error) {
 	msg, err := queryServer(host)
 	if err != nil {
+		fmt.Println(" is broken")
 		return ntpEpoch, err
 	}
+	fmt.Println(" is a stratum", msg.Stratum, "NTP server")
 	return parseTime(msg.ReceiveTime), nil
 }
 
