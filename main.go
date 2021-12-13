@@ -1,92 +1,69 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"flag"
+	"context"
 	"fmt"
 	"net"
-	"os"
-
-	"github.com/cloudflare/roughtime/mjd"
-	"github.com/cloudflare/roughtime/protocol"
-
-	"golang.org/x/crypto/ed25519"
+	"net/http"
+	"time"
 )
 
-var (
-	addr        string
-	privKeyFile string
-)
-
-func init() {
-	flag.StringVar(&addr, "a", ":2002", "address to listen on")
-	flag.StringVar(&privKeyFile, "k", "priv.key", "file with private key")
-	flag.Parse()
-}
+var targetURL = "https://www.cl.cam.ac.uk/"
+var version = "dev"
 
 func main() {
-	keyStr, err := os.ReadFile(privKeyFile)
+	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
-		fmt.Printf("fatal: could not read %s: %v\n", privKeyFile, err)
-		os.Exit(1)
+		panic(err)
 	}
+	req.Header.Set("Cache-Control", "no-store, max-age=0")
+	req.Header.Set("User-Agent", "timecheckd/"+version+" (+https://github.com/CHTJonas/timecheckd)")
 
-	rootKey, err := base64.StdEncoding.DecodeString(string(keyStr))
+	client := getHTTPClient("")
+	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("fatal: could not decode private key: %v\n", err)
-		os.Exit(1)
+		panic(err)
 	}
+	defer resp.Body.Close()
 
-	netAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		fmt.Printf("fatal: could not resolve %s: %v\n", netAddr, err)
-		os.Exit(1)
-	}
-
-	conn, err := net.ListenUDP("udp", netAddr)
-	if err != nil {
-		fmt.Printf("fatal: could not listen on %s: %v\n", addr, err)
-		os.Exit(1)
-	}
-
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		fmt.Printf("fatal: could not generate key: %v\n", err)
-		os.Exit(1)
-	}
-
-	now, err := getMjd()
-	if err != nil {
-		fmt.Printf("fatal: could not obtain timestamp from NTP: %v\n", err)
-		os.Exit(1)
-	}
-	yesterday := mjd.New(now.Day()-1, now.Microseconds())
-	tomorrow := mjd.New(now.Day()+1, now.Microseconds())
-	cert, err := protocol.CreateCertificate(yesterday, tomorrow, pub, rootKey)
-	if err != nil {
-		fmt.Printf("fatal: could not generate certificate: %v\n", err)
-		os.Exit(1)
-	}
-
-	query := make([]byte, 1280)
-	for {
-		queryLen, peer, err := conn.ReadFrom(query)
-		if err != nil {
-			fmt.Printf("error reading query: %v\n", err)
-			continue
+	if dateString := resp.Header.Get("Date"); dateString != "" {
+		t := parseHTTPDate(dateString)
+		d := time.Now().UTC().Sub(*t)
+		fmt.Println(d)
+		if d > 10*time.Second || d < -10*time.Second {
+			fmt.Println("Your clock is skewed")
 		}
-		tstamp, err := getMjd()
-		if err != nil {
-			fmt.Printf("error obtaining timestamp from NTP: %v\n", err)
-			continue
+	}
+}
+
+func parseHTTPDate(dateString string) *time.Time {
+	layout := "Mon, 02 Jan 2006 15:04:05 GMT"
+	t, err := time.Parse(layout, dateString)
+	if err != nil {
+		panic(err)
+	}
+	return &t
+}
+
+func getHTTPClient(networkOverride string) *http.Client {
+	dialer := &net.Dialer{
+		KeepAlive: -1,
+	}
+	dialCtx := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if networkOverride != "" {
+			network = networkOverride
 		}
-		reply, err := protocol.CreateReply(query[:queryLen], *tstamp, 1000000, cert, priv)
-		if err != nil {
-			fmt.Printf("error generating reply: %v\n", err)
-			continue
-		}
-		fmt.Printf("sending reply to %s\n", peer)
-		conn.WriteTo(reply, peer)
+		return dialer.DialContext(ctx, network, addr)
+	}
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+		DialContext:       dialCtx,
+	}
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: time.Duration(5*time.Second) * time.Millisecond,
 	}
 }
